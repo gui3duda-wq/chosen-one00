@@ -3,45 +3,44 @@ import { db } from '@/lib/db'
 import { hashPassword, verifyPassword } from '@/lib/auth'
 
 /**
- * GET /api/setup — garante que o admin existe com a senha padrão (admin123).
+ * GET /api/setup — SEMPRE garante acesso ao admin.
  *
- * USE ESTE ENDPOINT UMA VEZ APÓS O DEPLOY:
- * Acesse https://seu-site.vercel.app/api/setup no navegador.
- * Ele vai:
- *   1. Verificar se o admin "admin" existe
- *   2. Se não existir, criar com a senha "admin123"
- *   3. Se existir mas a senha estiver corrompida, redefinir para "admin123"
- *   4. Também cria as configurações padrão se faltarem
+ * Este endpoint é à prova de falhas:
+ * - Se não tem admin → cria com senha admin123
+ * - Se tem admin mas a senha não é admin123 → REDEFINE para admin123
+ * - Se já está correto → mantém
  *
- * Após acessar, faça login com admin / admin123 e TROQUE A SENHA imediatamente.
+ * Acesse https://seu-site.vercel.app/api-setup SEMPRE que tiver problema de login.
  */
 export async function GET() {
   try {
     const results: string[] = []
 
-    // 1. Garantir admin com senha admin123
+    // 1. SEMPRE garantir que o admin existe com senha admin123
     const existingAdmin = await db.admin.findUnique({ where: { username: 'admin' } })
+
     if (!existingAdmin) {
+      // Criar admin do zero
       await db.admin.create({
         data: { username: 'admin', password: hashPassword('admin123') },
       })
-      results.push('✅ Admin criado com senha padrão (admin/admin123)')
+      results.push('✅ Admin criado com senha admin123')
     } else {
-      // Verificar se a senha admin123 funciona
+      // Admin existe — verificar se a senha admin123 funciona
       const senhaOk = verifyPassword('admin123', existingAdmin.password)
       if (!senhaOk) {
-        // Redefinir para admin123
+        // REDEFINIR para admin123 (sobrescreve qualquer senha que não funcione)
         await db.admin.update({
           where: { username: 'admin' },
           data: { password: hashPassword('admin123') },
         })
-        results.push('✅ Senha do admin redefinida para padrão (admin/admin123)')
+        results.push('✅ Senha do admin REDEFINIDA para admin123 (acesso restaurado)')
       } else {
         results.push('✅ Admin já existe e a senha admin123 funciona')
       }
     }
 
-    // 2. Garantir configurações padrão
+    // 2. Garantir configurações padrão (não sobrescreve existentes)
     const settingsCount = await db.siteSetting.count()
     if (settingsCount === 0) {
       const defaults = [
@@ -56,30 +55,34 @@ export async function GET() {
         { key: 'contactInstagram', value: '@chosenone' },
         { key: 'footerText', value: 'CHOSEN ONE — Nascemos para ser escolhidos, não para ser mais um.' },
         { key: 'logoImage', value: '/uploads/co-logo-red.png' },
-        { key: 'marqueeText', value: 'CHOSEN ONE • O ESCOLHIDO NÃO ERRA • VOCÊ DECIDE QUANDO TERMINA • UM PASSO DE CADA VEZ • NÃO NASCEMOS PARA SER MAIS UM •' },
+        { key: 'marqueeText', value: 'CHOSEN ONE • O ESCOLHIDO NÃO ERRRA • VOCÊ DECIDE QUANDO TERMINA • UM PASSO DE CADA VEZ • NÃO NASCEMOS PARA SER MAIS UM •' },
       ]
       for (const s of defaults) {
         await db.siteSetting.create({ data: s })
       }
       results.push(`✅ ${defaults.length} configurações criadas`)
     } else {
-      results.push(`✅ ${settingsCount} configurações já existem`)
+      results.push(`✅ ${settingsCount} configurações já existem (preservadas)`)
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Setup concluído com sucesso!',
+      message: 'Setup concluído! Agora você pode fazer login.',
       results,
+      login: {
+        username: 'admin',
+        password: 'admin123',
+        url: '/',
+      },
       nextSteps: [
-        '1. Acesse a página inicial do site',
+        '1. Volte para a página inicial',
         '2. Clique em "Admin" no topo',
-        '3. Faça login: usuário "admin" / senha "admin123"',
-        '4. Vá em "Conta & Senha" e TROQUE a senha imediatamente',
-        '5. Configure seu número de WhatsApp em "Aparência & Conteúdo"',
-        '6. Adicione suas camisetas em "Produtos"',
+        '3. Login: admin / admin123',
+        '4. Troque a senha em "Conta & Senha"',
       ],
     })
   } catch (e) {
+    console.error('[setup] Erro:', e)
     return NextResponse.json({
       success: false,
       error: e instanceof Error ? e.message : 'Erro no setup',
